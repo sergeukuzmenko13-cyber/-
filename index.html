@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Шашки Онлайн (P2P)</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<!-- Подключаем PeerJS для связи без сервера -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; touch-action: manipulation; }
+  #stage { position: absolute; top: 50%; left: 50%; width: 100vh; height: 100vw; transform: translate(-50%, -50%) rotate(90deg); transform-origin: center center; overflow: hidden; background: #000; }
+  #startScreen { position: absolute; inset: 0; z-index: 1; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #startControls { position: absolute; left: 40px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 12px; z-index: 10; }
+  .btn { background: rgba(128,128,128,0.65); color: #fff; border: none; border-radius: 12px; padding: 14px 28px; font-size: 17px; font-weight: 600; cursor: pointer; transition: background .2s, transform .2s; text-align: center; }
+  .btn:active { transform: scale(0.95); background: rgba(110,110,110,0.9); }
+  #menuWrapper { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: transparent; opacity: 0; visibility: hidden; transition: opacity 0.4s ease; pointer-events: none; }
+  #menuWrapper.active { opacity: 1; visibility: visible; }
+  #menuCard { background: #2a2a2a; border-radius: 20px; padding: 20px; width: 400px; max-width: 80vw; box-shadow: 0 10px 40px rgba(0,0,0,0.8); display: flex; flex-direction: column; align-items: center; gap: 15px; transform: scale(0.8); transition: transform 0.4s; pointer-events: auto; }
+  #menuWrapper.active #menuCard { transform: scale(1); }
+  #catImage { width: 100%; height: 150px; object-fit: cover; border-radius: 12px; }
+  .btn-red { background: #d63a3a; font-size: 20px; padding: 15px; width: 100%; }
+  .btn-gray { background: #444; color: #fff; font-weight: 700; width: 100%; }
+
+  #gameScreen { position: absolute; inset: 0; z-index: 30; display: none; flex-direction: column; align-items: center; justify-content: center; }
+  #gameScreen.active { display: flex; }
+  #gameBgVideo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; opacity: 0.3; }
+  #boardContainer { position: relative; width: 80vh; height: 80vh; max-width: 90vw; max-height: 90vw; border: 4px solid #5d4037; z-index: 2; background: rgba(0,0,0,0.3); }
+  #board { width: 100%; height: 100%; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); }
+  .cell { display: flex; align-items: center; justify-content: center; position: relative; }
+  .cell.black { background: #3e2723; }
+  .cell.white { background: #d7ccc8; }
+  .piece { width: 80%; height: 80%; border-radius: 50%; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); transition: transform 0.2s; }
+  .piece.white { background: radial-gradient(circle at 30% 30%, #fff, #bbb); border: 2px solid #888; }
+  .piece.black { background: radial-gradient(circle at 30% 30%, #555, #111); border: 2px solid #000; }
+  .piece.selected { transform: scale(1.15); box-shadow: 0 0 15px 5px rgba(255, 235, 59, 0.8); }
+  .piece.king::after { content: "★"; color: gold; font-size: 24px; }
+  .cell.valid-move::after { content: ""; width: 30%; height: 30%; border-radius: 50%; background: rgba(76, 175, 80, 0.7); position: absolute; }
+  .cell.capture-move::after { content: ""; width: 60%; height: 60%; border-radius: 50%; border: 4px solid rgba(244, 67, 54, 0.8); position: absolute; }
+  #gameHeader { position: absolute; top: 20px; color: white; font-size: 24px; font-weight: bold; z-index: 3; text-align: center; width: 100%; text-shadow: 1px 1px 4px #000;}
+  #backToMenuBtn { position: absolute; top: 20px; right: 20px; z-index: 40; background: #d63a3a; padding: 10px 20px; }
+
+  #codeModal { position: absolute; inset: 0; background: rgba(0,0,0,0.9); z-index: 50; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 20px; }
+  #codeModal.active { display: flex; }
+  #codeInput { padding: 15px; font-size: 24px; text-align: center; border-radius: 10px; border: none; width: 200px; text-transform: uppercase; }
+  #roomCodeDisplay { font-size: 40px; color: gold; font-weight: bold; letter-spacing: 5px; margin: 20px 0; }
+  #copyBtn { background: #4CAF50; color: white; padding: 10px 20px; border-radius: 10px; border: none; cursor: pointer; font-size: 16px; }
+  .modal-text { color: white; font-size: 18px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="startScreen"><video id="bgVideo" src="https://videotourl.com/videos/1795446308436-cb005786-091b-4973-ab55-8048fa47298b.mp4" autoplay muted loop playsinline></video></div>
+
+  <div id="startControls">
+    <button id="playBtn" class="btn">▶ Играть</button>
+  </div>
+
+  <div id="menuWrapper">
+    <div id="menuCard">
+      <img id="catImage" src="https://cdn.imagetourls.com/uploads/tyImg/XyQkTjwz.jpg" alt="Кот">
+      <button id="createGameBtn" class="btn btn-red">Создать игру</button>
+      <button id="joinGameBtn" class="btn btn-gray" style="background:#555;">Ввести код</button>
+      <button id="exitBtn" class="btn btn-gray">✕ Выход</button>
+    </div>
+  </div>
+
+  <div id="codeModal">
+    <div id="statusText" class="modal-text">Ожидание подключения друга...</div>
+    <div id="roomCodeDisplay" style="display: none;"></div>
+    <button id="copyBtn" style="display: none;">Скопировать код</button>
+    
+    <div id="joinMode" style="display: none; flex-direction: column; align-items: center; gap: 10px;">
+      <h2 style="color: white;">Введите код игры</h2>
+      <input type="text" id="codeInput" placeholder="код">
+      <button id="connectBtn" class="btn btn-red" style="width: auto; padding: 10px 40px;">Подключиться</button>
+    </div>
+    <button id="closeModalBtn" class="btn btn-gray" style="width: auto; margin-top: 20px;">Отмена</button>
+  </div>
+
+  <div id="gameScreen">
+    <video id="gameBgVideo" src="https://videotourl.com/videos/1795446308436-cb005786-091b-4973-ab55-8048fa47298b.mp4" autoplay muted loop playsinline></video>
+    <div id="gameHeader">Ожидание...</div>
+    <button id="backToMenuBtn" class="btn">В меню</button>
+    <div id="boardContainer"><div id="board"></div></div>
+  </div>
+</div>
+
+<script>
+  let tg = window.Telegram.WebApp;
+  tg.expand();
+
+  let peer = null;
+  let conn = null;
+  let myColor = 'w'; 
+  let turn = 'w'; 
+  let selectedPiece = null;
+  let validMoves = [];
+  let gameOver = false;
+  let board = [];
+  const BOARD_SIZE = 8;
+  const boardEl = document.getElementById('board');
+
+  const playBtn = document.getElementById('playBtn');
+  const menuWrapper = document.getElementById('menuWrapper');
+  const createGameBtn = document.getElementById('createGameBtn');
+  const joinGameBtn = document.getElementById('joinGameBtn');
+  const exitBtn = document.getElementById('exitBtn');
+  const codeModal = document.getElementById('codeModal');
+  const closeModalBtn = document.getElementById('closeModalBtn');
+  const statusText = document.getElementById('statusText');
+  const roomCodeDisplay = document.getElementById('roomCodeDisplay');
+  const copyBtn = document.getElementById('copyBtn');
+  const joinMode = document.getElementById('joinMode');
+  const connectBtn = document.getElementById('connectBtn');
+  const codeInput = document.getElementById('codeInput');
+  const gameScreen = document.getElementById('gameScreen');
+  const gameHeader = document.getElementById('gameHeader');
+  const backToMenuBtn = document.getElementById('backToMenuBtn');
+
+  playBtn.onclick = () => menuWrapper.classList.add('active');
+  exitBtn.onclick = () => menuWrapper.classList.remove('active');
+  closeModalBtn.onclick = () => { codeModal.classList.remove('active'); if(peer) peer.destroy(); };
+
+  // --- ЛОББИ (P2P) ---
+  createGameBtn.onclick = () => {
+    const roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+    statusText.innerText = "Ожидание подключения друга...";
+    roomCodeDisplay.style.display = 'block';
+    roomCodeDisplay.innerText = roomCode;
+    copyBtn.style.display = 'block';
+    joinMode.style.display = 'none';
+    codeModal.classList.add('active');
+    
+    copyBtn.onclick = () => { navigator.clipboard.writeText(roomCode); copyBtn.innerText = "Скопировано!"; };
+
+    if(peer) peer.destroy();
+    // Создаем хост-соединение с нашим кодом (префикс checkers- для уникальности)
+    peer = new Peer('checkers-' + roomCode);
+    
+    peer.on('open', (id) => {
+      myColor = 'w'; // Создатель всегда играет белыми
+    });
+
+    peer.on('connection', (connection) => {
+      conn = connection;
+      setupConnection();
+      startGame();
+    });
+  };
+
+  joinGameBtn.onclick = () => {
+    statusText.innerText = "Введите код друга";
+    roomCodeDisplay.style.display = 'none';
+    copyBtn.style.display = 'none';
+    joinMode.style.display = 'flex';
+    codeModal.classList.add('active');
+    
+    if(peer) peer.destroy();
+    peer = new Peer();
+    
+    peer.on('open', () => {
+      myColor = 'b'; // Подключившийся играет черными
+    });
+  };
+
+  connectBtn.onclick = () => {
+    const code = codeInput.value.trim().toUpperCase();
+    if(code.length < 3) return alert("Неверный код");
+    
+    conn = peer.connect('checkers-' + code);
+    setupConnection();
+    conn.on('open', () => {
+      codeModal.classList.remove('active');
+      startGame();
+    });
+  };
+
+  function setupConnection() {
+    conn.on('data', (data) => {
+      if(data.type === 'move') {
+        board = data.board;
+        turn = data.nextTurn;
+        selectedPiece = null; validMoves = [];
+        drawBoard();
+        gameHeader.innerText = "Твой ход!";
+      }
+    });
+    conn.on('close', () => {
+      alert("Друг отключился");
+      goToMenu();
+    });
+  }
+
+  function startGame() {
+    codeModal.classList.remove('active');
+    menuWrapper.classList.remove('active');
+    gameScreen.classList.add('active');
+    document.getElementById('gameBgVideo').play();
+    initBoard();
+    turn = 'w';
+    gameOver = false;
+    gameHeader.innerText = "Игра началась! Ход белых.";
+    drawBoard();
+  }
+
+  // --- ЛОГИКА ШАШЕК ---
+  function initBoard() {
+    board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null));
+    for (let r = 0; r < 3; r++) { for (let c = 0; c < BOARD_SIZE; c++) { if ((r + c) % 2 !== 0) board[r][c] = { color: 'b', king: false }; } }
+    for (let r = 5; r < 8; r++) { for (let c = 0; c < BOARD_SIZE; c++) { if ((r + c) % 2 !== 0) board[r][c] = { color: 'w', king: false }; } }
+  }
+
+  function drawBoard() {
+    boardEl.innerHTML = '';
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const cell = document.createElement('div');
+        cell.className = `cell ${(r + c) % 2 === 0 ? 'white' : 'black'}`;
+        if (board[r][c]) {
+          const piece = document.createElement('div');
+          piece.className = `piece ${board[r][c].color === 'w' ? 'white' : 'black'}`;
+          if (board[r][c].king) piece.classList.add('king');
+          if (selectedPiece && selectedPiece.r === r && selectedPiece.c === c) piece.classList.add('selected');
+          cell.appendChild(piece);
+        }
+        const move = validMoves.find(m => m.to.r === r && m.to.c === c);
+        if (move) cell.classList.add(move.captured ? 'capture-move' : 'valid-move');
+        
+        cell.onclick = () => handleCellClick(r, c);
+        boardEl.appendChild(cell);
+      }
+    }
+  }
+
+  function handleCellClick(r, c) {
+    if (turn !== myColor || gameOver) return;
+
+    const move = validMoves.find(m => m.to.r === r && m.to.c === c);
+    if (move) {
+      makeMove(move);
+      const nextTurn = (turn === 'w') ? 'b' : 'w';
+      
+      // Отправляем ход другу
+      conn.send({ type: 'move', board: board, nextTurn: nextTurn });
+      
+      turn = nextTurn;
+      selectedPiece = null; validMoves = [];
+      drawBoard();
+      gameHeader.innerText = "Ход противника...";
+      return;
+    }
+
+    const piece = board[r][c];
+    if (piece && piece.color === myColor) {
+      selectedPiece = { r, c };
+      validMoves = getValidMoves(r, c, board);
+      drawBoard();
+    } else {
+      selectedPiece = null; validMoves = []; drawBoard();
+    }
+  }
+
+  function getValidMoves(r, c, currentBoard) {
+    const piece = currentBoard[r][c];
+    if (!piece) return [];
+    let globalCapturesExist = false;
+    for (let i = 0; i < 8; i++) { for (let j = 0; j < 8; j++) { if (currentBoard[i][j] && currentBoard[i][j].color === piece.color) { if (findCaptures(i, j, currentBoard).length > 0) globalCapturesExist = true; } } }
+    if (globalCapturesExist) return findCaptures(r, c, currentBoard);
+    else {
+      let moves = [];
+      const dirs = piece.king ? [[-1,-1], [-1,1], [1,-1], [1,1]] : piece.color === 'w' ? [[-1,-1], [-1,1]] : [[1,-1], [1,1]];
+      if (piece.king) {
+        for (let dir of dirs) { let nr = r + dir[0], nc = c + dir[1]; while (isValid(nr, nc) && !currentBoard[nr][nc]) { moves.push({ from: {r, c}, to: {r: nr, c: nc}, captured: null }); nr += dir[0]; nc += dir[1]; } }
+      } else {
+        for (let dir of dirs) { let nr = r + dir[0], nc = c + dir[1]; if (isValid(nr, nc) && !currentBoard[nr][nc]) { moves.push({ from: {r, c}, to: {r: nr, c: nc}, captured: null }); } }
+      }
+      return moves;
+    }
+  }
+
+  function findCaptures(r, c, currentBoard) {
+    const piece = currentBoard[r][c];
+    if (!piece) return [];
+    let captures = [];
+    const dirs = [[-1,-1], [-1,1], [1,-1], [1,1]];
+    if (piece.king) {
+      for (let dir of dirs) { let nr = r + dir[0], nc = c + dir[1]; let foundEnemy = null; while (isValid(nr, nc)) { const target = currentBoard[nr][nc]; if (target) { if (target.color !== piece.color && !foundEnemy) { foundEnemy = { r: nr, c: nc }; } else { break; } } else if (foundEnemy) { captures.push({ from: {r, c}, to: {r: nr, c: nc}, captured: foundEnemy }); } nr += dir[0]; nc += dir[1]; } }
+    } else {
+      for (let dir of dirs) { let nr = r + dir[0], nc = c + dir[1]; let nnr = r + dir[0]*2, nnc = c + dir[1]*2; if (isValid(nnr, nnc)) { const enemy = currentBoard[nr][nc]; const empty = currentBoard[nnr][nnc]; if (enemy && enemy.color !== piece.color && !empty) { captures.push({ from: {r, c}, to: {r: nnr, c: nnc}, captured: {r: nr, c: nc} }); } } }
+    }
+    return captures;
+  }
+
+  function isValid(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
+
+  function makeMove(move) {
+    const piece = board[move.from.r][move.from.c];
+    board[move.from.r][move.from.c] = null;
+    board[move.to.r][move.to.c] = piece;
+    if (move.captured) board[move.captured.r][move.captured.c] = null;
+    if (piece.color === 'w' && move.to.r === 0) piece.king = true;
+    if (piece.color === 'b' && move.to.r === 7) piece.king = true;
+  }
+
+  function goToMenu() {
+    gameScreen.classList.remove('active');
+    document.getElementById('gameBgVideo').pause();
+    menuWrapper.classList.add('active');
+  }
+
+  backToMenuBtn.onclick = () => {
+    if(conn) conn.close();
+    goToMenu();
+  };
+</script>
+</body>
+</html>
